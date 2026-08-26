@@ -4,7 +4,7 @@
   "value_classification": "Greed",
   "timestamp": 1787702400,
   "timestamp_iso": "2026-08-26T00:00:00Z",
-  "fetched_at": "2026-08-26T09:53:29.182421Z",
+  "fetched_at": "2026-08-26T10:47:25.869297Z",
   "source": "Alternative.me official API",
   "endpoint": "https://api.alternative.me/fng/?limit=1&format=json"
 }
