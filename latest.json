@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "value": 65,
+  "value_classification": "Greed",
+  "timestamp": 1787702400,
+  "timestamp_iso": "2026-08-26T00:00:00Z",
+  "fetched_at": "2026-08-26T07:40:33.174624Z",
+  "source": "Alternative.me official API",
+  "endpoint": "https://api.alternative.me/fng/?limit=1&format=json"
+}
