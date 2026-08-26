@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "7 * * * *"
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "fetch_fng.py"
+      - ".github/workflows/update-fng.yml"
 
 permissions:
   contents: write
