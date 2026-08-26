@@ -21,6 +21,18 @@ ALLOWED_CLASSIFICATIONS = {
 }
 
 
+def expected_classification(value: int) -> str:
+    if value <= 24:
+        return "Extreme Fear"
+    if value <= 44:
+        return "Fear"
+    if value <= 55:
+        return "Neutral"
+    if value <= 75:
+        return "Greed"
+    return "Extreme Greed"
+
+
 def fetch_json():
     last_error = None
     for attempt in range(1, ATTEMPTS + 1):
@@ -54,7 +66,9 @@ def validate(payload):
         raise ValueError("top-level JSON must be an object")
 
     metadata = payload.get("metadata")
-    if isinstance(metadata, dict) and metadata.get("error") not in (None, ""):
+    if not isinstance(metadata, dict):
+        raise ValueError("metadata is missing or invalid")
+    if metadata.get("error") not in (None, ""):
         raise ValueError(f"API metadata.error is not null: {metadata.get('error')}")
 
     data = payload.get("data")
@@ -79,6 +93,12 @@ def validate(payload):
     classification = str(item["value_classification"]).strip()
     if classification not in ALLOWED_CLASSIFICATIONS:
         raise ValueError(f"unexpected value_classification: {classification!r}")
+    expected = expected_classification(value)
+    if classification != expected:
+        raise ValueError(
+            f"value/classification mismatch: value={value}, "
+            f"classification={classification!r}, expected={expected!r}"
+        )
 
     try:
         timestamp = int(item["timestamp"])
@@ -111,8 +131,8 @@ def main():
         "endpoint": API_URL,
     }
 
-    # Write only after every validation succeeds. On fetch/validation failure,
-    # the previous latest.json remains untouched.
+    # Only replace latest.json after fetch + parsing + validation all succeed.
+    # If anything fails, the previous known-good latest.json remains intact.
     temp = OUTPUT.with_suffix(".json.tmp")
     temp.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temp.replace(OUTPUT)
