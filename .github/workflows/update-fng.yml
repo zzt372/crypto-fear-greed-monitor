@@ -12,6 +12,7 @@ on:
       - main
     paths:
       - "fetch_fng.py"
+      - "test_fetch_fng.py"
       - ".github/workflows/update-fng.yml"
 
 permissions:
@@ -36,6 +37,9 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      - name: Run regression tests
+        run: python -m unittest -v test_fetch_fng.py
 
       - name: Fetch and validate Alternative.me official API
         run: python fetch_fng.py
