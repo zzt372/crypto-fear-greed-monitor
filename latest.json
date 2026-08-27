@@ -1,10 +1,14 @@
 {
+  "schema_version": 2,
   "ok": true,
   "value": 71,
   "value_classification": "Greed",
   "timestamp": 1787788800,
   "timestamp_iso": "2026-08-27T00:00:00Z",
-  "fetched_at": "2026-08-27T02:47:03.790558Z",
+  "fetched_at": "2026-08-27T02:47:37.687889Z",
+  "source_age_seconds": 10057,
+  "time_until_update": 76343,
   "source": "Alternative.me official API",
-  "endpoint": "https://api.alternative.me/fng/?limit=1&format=json"
+  "endpoint": "https://api.alternative.me/fng/?limit=1&format=json",
+  "fetch_method": "urllib-attempt-1"
 }
