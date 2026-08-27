@@ -2,91 +2,153 @@
 
 [![Update Crypto Fear & Greed](https://github.com/zzt372/crypto-fear-greed-monitor/actions/workflows/update-fng.yml/badge.svg)](https://github.com/zzt372/crypto-fear-greed-monitor/actions/workflows/update-fng.yml)
 
-Alternative.me の **Crypto Fear & Greed Index** を GitHub Actions で定期取得し、検証済みの最新値を `latest.json` として公開する小さなモニターです。
+Alternative.me の **Crypto Fear & Greed Index** を GitHub Actions で定期取得し、検証済みの最新正常値を `latest.json` として公開するモニターです。
 
-このリポジトリの目的は、ChatGPT など外部の監視処理が Alternative.me へ直接アクセスできない場合でも、**Alternative.me 公式 API 由来の値だけ**を安定して参照できるようにすることです。
+主な目的は、ChatGPT などの外部監視処理が Alternative.me に直接アクセスできない場合でも、**Alternative.me 公式 API 由来の値だけ**を安定して参照できるようにすることです。
 
 > **Data source:** [Alternative.me Crypto Fear & Greed Index](https://alternative.me/crypto/fear-and-greed-index/)  
 > **Official API:** `https://api.alternative.me/fng/`
 
 このリポジトリは Alternative.me の公式プロジェクトではありません。Fear & Greed Index のデータは Alternative.me に帰属します。
 
-## 仕組み
+## アーキテクチャ
 
 ```text
 Alternative.me official API
           ↓
-     GitHub Actions
+  urllib + retry
+          ↓ failure
+   curl + retry fallback
           ↓
-  fetch_fng.py で検証
-          ↓
+     fetch_fng.py
+          ↓ validation
       latest.json
           ↓
    ChatGPT / 外部監視
 ```
 
-GitHub Actions が毎時 Alternative.me 公式 API を取得し、`fetch_fng.py` でレスポンスを検証します。
+取得・JSON解析・検証のすべてに成功した場合だけ `latest.json` をatomicに置き換えます。
 
-検証に成功した場合だけ `latest.json` を更新します。API 取得失敗やデータ異常があった場合は Workflow を失敗させ、**既存の `latest.json` を上書きしません**。
+一時的なネットワーク障害、DNS障害、HTTPエラー、壊れたJSON、データ異常などが起きた場合は、**最後に成功した `latest.json` をそのまま保持**します。失敗データで正常値を上書きしません。
 
-## 更新頻度
+## 冗長スケジュール
 
-Workflow は毎時 **7分（UTC）** に実行します。
+GitHub Actions の `schedule` は **毎時 07 / 22 / 37 / 52 分（UTC）**、つまり15分間隔で実行します。
 
 ```yaml
 schedule:
-  - cron: "7 * * * *"
+  - cron: "7,22,37,52 * * * *"
 ```
 
-GitHub Actions は毎時ちょうどの時間帯に負荷が集中して遅延する場合があるため、0分ではなく7分にずらしています。
+GitHub は、Actions の負荷が高い時間帯には scheduled workflow が遅延し、負荷が十分高い場合にはqueued jobがdropされる可能性があると公式ドキュメントで説明しています。
+
+そのため、このリポジトリでは「毎時1回のcronが必ず動く」ことを前提にせず、**1時間に4回の独立した実行機会**を持たせています。1回のscheduleが飛んでも、次の15分枠で自動的に追いつく設計です。
+
+- `:07`
+- `:22`
+- `:37`
+- `:52`
 
 `workflow_dispatch` にも対応しているため、GitHub の **Actions → Update Crypto Fear & Greed → Run workflow** から手動実行できます。
+
+GitHub公式ドキュメントでは、scheduled workflow の最短間隔は5分です。このリポジトリは15分間隔なので仕様内です。
+
+また、このリポジトリはpublic repositoryであり、標準GitHub-hosted runnerの利用はGitHub公式上、無料・無制限です。
+
+参考:
+
+- https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows
+- https://docs.github.com/en/actions/how-tos/troubleshoot-workflows
+- https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+
+## API取得の冗長化
+
+公式API以外の値は使用しません。
+
+取得候補は、同じ Alternative.me 公式 `/fng/` endpoint の次のURL表現です。
+
+```text
+https://api.alternative.me/fng/?limit=1&format=json
+https://api.alternative.me/fng/
+```
+
+処理順序は概ね次の通りです。
+
+```text
+公式API URL #1
+  ├─ urllib attempt 1
+  ├─ urllib attempt 2
+  ├─ urllib attempt 3
+  └─ curl retry fallback
+        ↓ failure
+公式API URL #2
+  ├─ urllib attempt 1
+  ├─ urllib attempt 2
+  ├─ urllib attempt 3
+  └─ curl retry fallback
+        ↓ failure
+Workflow failure
+        ↓
+既存 latest.json を保持
+```
+
+`curl` 側でも `--retry-all-errors` を使って再試行します。
+
+第三者サイト、検索スニペット、Webページ上の表示値、Firecrawl、proxy値などをAPI値の代替として使用することはありません。
 
 ## データ検証
 
 `latest.json` に採用する前に、少なくとも次を検証します。
 
-- HTTP リクエストが成功している
-- レスポンスが JSON として解析できる
+- HTTP取得に成功する
+- レスポンスがJSONとして解析できる
+- `metadata` が存在する
 - `metadata.error` にエラーがない
 - `data[0]` が存在する
-- `value` が 0〜100 の整数
-- `value_classification` が既知の分類名
-- `value` と `value_classification` の組み合わせが整合している
-- `timestamp` が Unix time として解釈できる
-- `timestamp` が未来ではない
-- `timestamp` が取得時点から48時間以上古くない
+- `value` が0〜100の整数
+- `value_classification` が既知の公式分類名
+- `timestamp` がUnix timeとして解釈できる
+- `timestamp` が大幅に未来ではない
+- `timestamp` が72時間以上古くない
 
-カテゴリの整合性チェックには次の区分を使用します。
+### Classification
 
-| Value | Classification |
-|---:|---|
-| 0–24 | Extreme Fear |
-| 25–44 | Fear |
-| 45–55 | Neutral |
-| 56–75 | Greed |
-| 76–100 | Extreme Greed |
+カテゴリは **Alternative.me公式APIが返す `value_classification` を正**として扱います。
+
+許可する値は次の5種類です。
+
+- `Extreme Fear`
+- `Fear`
+- `Neutral`
+- `Greed`
+- `Extreme Greed`
+
+ローカル側で独自の数値境界を再計算し、公式classificationとの一致を必須にすることはしていません。提供元が将来分類方法を変更した場合に、監視側の古い境界定義だけを理由として正常データを拒否することを避けるためです。
 
 ## `latest.json`
 
-最新の検証済みデータは次の URL から取得できます。
+最新の検証済みデータは次から取得できます。
 
 ```text
 https://raw.githubusercontent.com/zzt372/crypto-fear-greed-monitor/main/latest.json
 ```
 
-出力例:
+schema version 2 の例:
 
 ```json
 {
+  "schema_version": 2,
   "ok": true,
-  "value": 65,
+  "value": 71,
   "value_classification": "Greed",
-  "timestamp": 1787702400,
-  "timestamp_iso": "2026-08-26T00:00:00Z",
-  "fetched_at": "2026-08-26T07:40:33.174624Z",
+  "timestamp": 1787788800,
+  "timestamp_iso": "2026-08-27T00:00:00Z",
+  "fetched_at": "2026-08-27T02:48:48.840280Z",
+  "source_age_seconds": 10128,
+  "time_until_update": 76272,
   "source": "Alternative.me official API",
-  "endpoint": "https://api.alternative.me/fng/?limit=1&format=json"
+  "endpoint": "https://api.alternative.me/fng/?limit=1&format=json",
+  "fetch_method": "urllib-attempt-1"
 }
 ```
 
@@ -94,38 +156,90 @@ https://raw.githubusercontent.com/zzt372/crypto-fear-greed-monitor/main/latest.j
 
 | Field | 内容 |
 |---|---|
+| `schema_version` | JSON schemaの世代 |
 | `ok` | 検証済み正常データであることを示すフラグ |
 | `value` | Fear & Greed Index の値（0〜100） |
-| `value_classification` | `Extreme Fear` / `Fear` / `Neutral` / `Greed` / `Extreme Greed` |
-| `timestamp` | Alternative.me 公式 API が返した Unix timestamp |
-| `timestamp_iso` | `timestamp` の UTC ISO 8601 表記 |
-| `fetched_at` | GitHub Actions が取得・検証した時刻 |
+| `value_classification` | Alternative.me公式APIが返した分類 |
+| `timestamp` | Alternative.me公式APIのUnix timestamp |
+| `timestamp_iso` | `timestamp` のUTC ISO 8601表記 |
+| `fetched_at` | GitHub Actionsが実際に取得・検証したUTC時刻 |
+| `source_age_seconds` | 取得時点での公式timestampの経過秒数 |
+| `time_until_update` | APIに値がある場合の次回更新までの秒数 |
 | `source` | データソース識別子 |
-| `endpoint` | 実際に取得した Alternative.me 公式 API endpoint |
+| `endpoint` | 成功したAlternative.me公式API URL |
+| `fetch_method` | 成功した取得経路 |
 
-外部監視で利用する場合は、`value` だけではなく **`fetched_at` と `timestamp` の鮮度も確認することを推奨**します。
+外部監視では `value` だけでなく、`ok`、`source`、`timestamp`、`fetched_at` も確認してください。
 
-## 障害時の挙動
+## 自動テスト
 
-API 取得には最大3回の試行を行います。
+`test_fetch_fng.py` を用意し、**すべてのGitHub Actions実行でlive API取得より先に回帰テスト**を実行します。
 
-```text
-1回目失敗
-  ↓
-待機して再試行
-  ↓
-2回目失敗
-  ↓
-待機して再試行
-  ↓
-3回目失敗
-  ↓
-Workflow failure
-  ↓
-latest.json は変更しない
+現在は次をテストしています。
+
+1. 正常な公式形式JSONを受理する
+2. 0〜100範囲外のvalueを拒否する
+3. 未知のclassificationを拒否する
+4. `metadata.error` を拒否する
+5. 古すぎるtimestampを拒否する
+6. 小さな時計ずれを許容する
+7. urllibが失敗した場合にcurl fallbackへ移行する
+
+```bash
+python -m unittest -v test_fetch_fng.py
 ```
 
-これにより、一時的な DNS 障害、タイムアウト、HTTP エラー、壊れた JSON などが発生しても、不正な値で正常データを上書きしないようにしています。
+テストに失敗した場合はlive API取得へ進みません。
+
+## GitHub Actions の処理
+
+Workflowは次の順で処理します。
+
+```text
+checkout@v6
+   ↓
+setup-python@v6 / Python 3.12
+   ↓
+regression tests
+   ↓
+live Alternative.me API fetch
+   ↓
+validation
+   ↓
+latest.json atomic replace
+   ↓
+git commit
+   ↓
+git push
+```
+
+Git pushについても、mainが実行中に進んだ場合を考慮して最大3回までrebase + retryします。
+
+Workflow全体には `concurrency` を設定しており、複数の更新処理が同時に `latest.json` を競合更新しにくい構成にしています。
+
+## 障害時の考え方
+
+このモニターは「毎回必ず成功する」ことではなく、**一時障害を正常データへ波及させず、次の実行機会で自動回復すること**を重視しています。
+
+```text
+1回のscheduleがdrop
+        ↓
+次の15分枠で再実行
+
+API通信が一時失敗
+        ↓
+urllib retry
+        ↓
+curl retry fallback
+        ↓
+それでも失敗
+        ↓
+last-known-good latest.json を保持
+        ↓
+次の15分枠で再挑戦
+```
+
+そのため、consumer側も1回の取得失敗を重大障害として扱わず、最後の正常値を保持して次回を待つ設計を推奨します。
 
 ## ファイル構成
 
@@ -133,47 +247,67 @@ latest.json は変更しない
 .
 ├── .github/
 │   └── workflows/
-│       └── update-fng.yml   # 定期取得・commit
-├── fetch_fng.py             # API取得・検証・JSON生成
-├── latest.json              # 最新の検証済み値
+│       └── update-fng.yml   # 定期取得・テスト・commit
+├── fetch_fng.py             # API取得・retry・validation・JSON生成
+├── test_fetch_fng.py        # 回帰テスト
+├── latest.json              # 最新の検証済み正常値
 └── README.md
 ```
 
 ## ローカル実行
 
-Python 3.12 以降を推奨します。外部ライブラリは使用していません。
+Python 3.12 以降を推奨します。Python側は外部パッケージを必要としません。
+
+テスト:
+
+```bash
+python -m unittest -v test_fetch_fng.py
+```
+
+実取得:
 
 ```bash
 python fetch_fng.py
 ```
 
-正常なら `latest.json` が更新され、標準出力にも取得結果が表示されます。
+正常時は `latest.json` が更新され、標準出力にも結果が表示されます。
 
-異常時は終了コード `1` で終了し、既存の `latest.json` は保持されます。
+異常時は終了コード1で終了し、既存の `latest.json` は保持されます。
 
 ## GitHub Actions の権限
 
-Workflow は生成した `latest.json` を同じリポジトリへ commit するため、次の権限を使用します。
+生成した `latest.json` を同じリポジトリへcommitするため、次の権限だけを明示しています。
 
 ```yaml
 permissions:
   contents: write
 ```
 
-Secrets や API キーは不要です。Alternative.me Fear & Greed Index API は公開 GET API を利用しています。
+SecretsやAlternative.me API keyは不要です。
+
+## Alternative.me API
+
+Alternative.me公式ページでは Fear and Greed Index APIについて次を公開しています。
+
+- Endpoint: `/fng/`
+- Method: `GET`
+- `limit` のデフォルト: `1`
+- `format` のデフォルト: JSON
+- date format未指定時のtimestamp: Unix time
+
+詳細:
+
+- https://alternative.me/crypto/fear-and-greed-index/
+- https://alternative.me/crypto/api/
+- https://api.alternative.me/fng/
 
 ## データ利用について
 
-Alternative.me は Fear & Greed Index API の利用時に、データソースとして Alternative.me を明示することを求めています。このリポジトリでも `source` フィールドと README の双方で出典を明記しています。
-
-詳細は Alternative.me の公式ページを確認してください。
-
-- https://alternative.me/crypto/fear-and-greed-index/
-- https://api.alternative.me/fng/
+Alternative.me は Fear & Greed Index API利用時にデータソースを明示するよう案内しています。このリポジトリでも `source` フィールドとREADMEの双方でAlternative.meを明記しています。
 
 ## 注意事項
 
 - このリポジトリは投資助言を提供するものではありません。
-- 指標の定義・算出方法・提供状況は Alternative.me 側で変更される可能性があります。
-- GitHub Actions の `schedule` は厳密なリアルタイム実行を保証するものではなく、GitHub 側の混雑などにより遅延する場合があります。
-- `latest.json` を利用する側でも `fetched_at` の鮮度検証を行うことを推奨します。
+- 外部サービスであるAlternative.meとGitHub Actionsを使う以上、100%の稼働保証はできません。
+- GitHub Actionsの`schedule`は厳密な時刻保証ではありません。
+- その制約を前提に、15分ごとの冗長実行、retry、fallback、last-known-good保持、回帰テストで障害耐性を高めています。
