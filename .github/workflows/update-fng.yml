@@ -1,8 +1,11 @@
 name: Update Crypto Fear & Greed
 
 on:
+  # GitHub documents that scheduled runs can be delayed or even dropped
+  # under high Actions load. Use four staggered opportunities per hour so
+  # a single missed schedule does not make latest.json stale.
   schedule:
-    - cron: "7 * * * *"
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
   push:
     branches:
@@ -20,15 +23,17 @@ concurrency:
 
 jobs:
   update:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -42,9 +47,28 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add latest.json
+
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
           fi
+
           git commit -m "Update Crypto Fear & Greed data"
-          git push
+
+          # Usually the first push succeeds. If main moved while this short
+          # job was running, rebase and retry instead of failing immediately.
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "git push failed after 3 attempts" >&2
+              exit 1
+            fi
+
+            echo "Push attempt $attempt failed; rebasing and retrying..." >&2
+            sleep $((attempt * 2))
+            git fetch origin main
+            git rebase origin/main
+          done
