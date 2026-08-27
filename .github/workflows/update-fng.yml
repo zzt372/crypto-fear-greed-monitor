@@ -1,11 +1,9 @@
 name: Update Crypto Fear & Greed
 
 on:
-  # GitHub documents that scheduled runs can be delayed or even dropped
-  # under high Actions load. Use four staggered opportunities per hour so
-  # a single missed schedule does not make latest.json stale.
   schedule:
-    - cron: "7,22,37,52 * * * *"
+    # GitHub's minimum supported schedule interval is 5 minutes.
+    - cron: "*/5 * * * *"
   workflow_dispatch:
   push:
     branches:
@@ -20,7 +18,7 @@ permissions:
 
 concurrency:
   group: update-crypto-fear-greed
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   update:
@@ -44,6 +42,60 @@ jobs:
       - name: Fetch and validate Alternative.me official API
         run: python fetch_fng.py
 
+      - name: Suppress unchanged-category commit churn
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import subprocess
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          path = Path("latest.json")
+          new = json.loads(path.read_text(encoding="utf-8"))
+
+          try:
+              old_raw = subprocess.check_output(
+                  ["git", "show", "HEAD:latest.json"], text=True
+              )
+              old = json.loads(old_raw)
+          except Exception:
+              raise SystemExit(0)
+
+          # Classification changes and a new provider timestamp should be
+          # published immediately. Otherwise keep only an hourly heartbeat.
+          material_change = any(
+              old.get(key) != new.get(key)
+              for key in (
+                  "value_classification",
+                  "timestamp",
+                  "ok",
+                  "source",
+                  "endpoint",
+              )
+          )
+          if material_change:
+              print("Material change detected; keep refreshed latest.json")
+              raise SystemExit(0)
+
+          try:
+              text = str(old.get("fetched_at", "")).replace("Z", "+00:00")
+              old_fetched = datetime.fromisoformat(text).astimezone(timezone.utc)
+              age = datetime.now(timezone.utc) - old_fetched
+          except Exception:
+              raise SystemExit(0)
+
+          if age.total_seconds() < 3600:
+              subprocess.run(
+                  ["git", "checkout", "HEAD", "--", "latest.json"],
+                  check=True,
+              )
+              print("Classification unchanged and heartbeat <1h; skip commit")
+          else:
+              print("Hourly heartbeat due; keep refreshed latest.json")
+          PY
+
       - name: Commit latest.json when refreshed
         shell: bash
         run: |
@@ -59,8 +111,6 @@ jobs:
 
           git commit -m "Update Crypto Fear & Greed data"
 
-          # Usually the first push succeeds. If main moved while this short
-          # job was running, rebase and retry instead of failing immediately.
           for attempt in 1 2 3; do
             if git push origin HEAD:main; then
               exit 0
