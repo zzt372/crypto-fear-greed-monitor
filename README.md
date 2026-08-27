@@ -4,14 +4,14 @@
 
 Alternative.me の **Crypto Fear & Greed Index** を GitHub Actions で定期取得し、検証済みの最新正常値を `latest.json` として公開するモニターです。
 
-主な目的は、ChatGPT などの外部監視処理が Alternative.me に直接アクセスできない場合でも、**Alternative.me 公式 API 由来の値だけ**を安定して参照できるようにすることです。
+主な目的は、ChatGPTなどの外部監視処理が Alternative.me に直接アクセスできない場合でも、**Alternative.me公式API由来の値だけ**を安定して参照できるようにすることです。
 
 > **Data source:** [Alternative.me Crypto Fear & Greed Index](https://alternative.me/crypto/fear-and-greed-index/)  
 > **Official API:** `https://api.alternative.me/fng/`
 
 このリポジトリは Alternative.me の公式プロジェクトではありません。Fear & Greed Index のデータは Alternative.me に帰属します。
 
-## アーキテクチャ
+## Architecture
 
 ```text
 Alternative.me official API
@@ -31,35 +31,32 @@ Alternative.me official API
 
 一時的なネットワーク障害、DNS障害、HTTPエラー、壊れたJSON、データ異常などが起きた場合は、**最後に成功した `latest.json` をそのまま保持**します。失敗データで正常値を上書きしません。
 
-## 冗長スケジュール
+## 5分ポーリング
 
-GitHub Actions の `schedule` は **毎時 07 / 22 / 37 / 52 分（UTC）**、つまり15分間隔で実行します。
+GitHub Actionsのscheduled workflowは**5分ごと**に実行します。
 
 ```yaml
 schedule:
-  - cron: "7,22,37,52 * * * *"
+  - cron: "*/5 * * * *"
 ```
 
-GitHub は、Actions の負荷が高い時間帯には scheduled workflow が遅延し、負荷が十分高い場合にはqueued jobがdropされる可能性があると公式ドキュメントで説明しています。
+1時間あたり最大12回の取得機会を持たせることで、1回または数回のschedule遅延・drop、一時的なAPI通信失敗が起きても、次の5分枠で自動的に追いつきやすくしています。
 
-そのため、このリポジトリでは「毎時1回のcronが必ず動く」ことを前提にせず、**1時間に4回の独立した実行機会**を持たせています。1回のscheduleが飛んでも、次の15分枠で自動的に追いつく設計です。
+`workflow_dispatch` にも対応しているため、GitHubの **Actions → Update Crypto Fear & Greed → Run workflow** から手動実行できます。
 
-- `:07`
-- `:22`
-- `:37`
-- `:52`
+## Commit抑制
 
-`workflow_dispatch` にも対応しているため、GitHub の **Actions → Update Crypto Fear & Greed → Run workflow** から手動実行できます。
+API取得・検証は5分ごとに行いますが、`fetched_at` の変化だけで毎回commitすると最大288 commit/日になるため、Git履歴の不要な増加を抑えています。
 
-GitHub公式ドキュメントでは、scheduled workflow の最短間隔は5分です。このリポジトリは15分間隔なので仕様内です。
+次の変化は即commitします。
 
-また、このリポジトリはpublic repositoryであり、標準GitHub-hosted runnerの利用はGitHub公式上、無料・無制限です。
+- `value_classification` の変化
+- Alternative.me公式 `timestamp` の変化
+- `ok` / `source` / `endpoint` の変化
 
-参考:
+上記が変わらない場合は、原則として**1時間ごとのheartbeat commit**だけを残します。
 
-- https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows
-- https://docs.github.com/en/actions/how-tos/troubleshoot-workflows
-- https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+つまり、**API確認は5分ごと、意味のある変化は即時公開、平常時のGit commitは抑制**という設計です。
 
 ## API取得の冗長化
 
@@ -152,7 +149,7 @@ schema version 2 の例:
 }
 ```
 
-### フィールド
+### Fields
 
 | Field | 内容 |
 |---|---|
@@ -208,23 +205,25 @@ validation
    ↓
 latest.json atomic replace
    ↓
-git commit
+commit suppression check
+   ↓
+git commit / skip
    ↓
 git push
 ```
 
 Git pushについても、mainが実行中に進んだ場合を考慮して最大3回までrebase + retryします。
 
-Workflow全体には `concurrency` を設定しており、複数の更新処理が同時に `latest.json` を競合更新しにくい構成にしています。
+Workflow全体には `concurrency` を設定し、`cancel-in-progress: true` によって古い重複実行を引きずりにくくしています。
 
 ## 障害時の考え方
 
-このモニターは「毎回必ず成功する」ことではなく、**一時障害を正常データへ波及させず、次の実行機会で自動回復すること**を重視しています。
+このモニターは「毎回必ず成功する」ことではなく、**一時障害を正常データへ波及させず、次の5分実行で自動回復すること**を重視しています。
 
 ```text
 1回のscheduleがdrop
         ↓
-次の15分枠で再実行
+次の5分枠で再実行
 
 API通信が一時失敗
         ↓
@@ -236,7 +235,7 @@ curl retry fallback
         ↓
 last-known-good latest.json を保持
         ↓
-次の15分枠で再挑戦
+次の5分枠で再挑戦
 ```
 
 そのため、consumer側も1回の取得失敗を重大障害として扱わず、最後の正常値を保持して次回を待つ設計を推奨します。
@@ -247,7 +246,7 @@ last-known-good latest.json を保持
 .
 ├── .github/
 │   └── workflows/
-│       └── update-fng.yml   # 定期取得・テスト・commit
+│       └── update-fng.yml   # 5分ごとの定期取得・テスト・commit制御
 ├── fetch_fng.py             # API取得・retry・validation・JSON生成
 ├── test_fetch_fng.py        # 回帰テスト
 ├── latest.json              # 最新の検証済み正常値
@@ -310,4 +309,4 @@ Alternative.me は Fear & Greed Index API利用時にデータソースを明示
 - このリポジトリは投資助言を提供するものではありません。
 - 外部サービスであるAlternative.meとGitHub Actionsを使う以上、100%の稼働保証はできません。
 - GitHub Actionsの`schedule`は厳密な時刻保証ではありません。
-- その制約を前提に、15分ごとの冗長実行、retry、fallback、last-known-good保持、回帰テストで障害耐性を高めています。
+- その制約を前提に、5分ごとの冗長実行、retry、fallback、last-known-good保持、回帰テスト、commit抑制で障害耐性と運用性を高めています。
