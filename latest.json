@@ -5,9 +5,9 @@
   "value_classification": "Greed",
   "timestamp": 1789776000,
   "timestamp_iso": "2026-09-19T00:00:00Z",
-  "fetched_at": "2026-09-19T16:36:13.543637Z",
-  "source_age_seconds": 59773,
-  "time_until_update": 26627,
+  "fetched_at": "2026-09-19T18:49:58.593508Z",
+  "source_age_seconds": 67798,
+  "time_until_update": 18602,
   "source": "Alternative.me official API",
   "endpoint": "https://api.alternative.me/fng/?limit=1&format=json",
   "fetch_method": "urllib-attempt-1"
