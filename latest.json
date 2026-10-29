@@ -5,9 +5,9 @@
   "value_classification": "Neutral",
   "timestamp": 1793232000,
   "timestamp_iso": "2026-10-29T00:00:00Z",
-  "fetched_at": "2026-10-29T15:38:30.299942Z",
-  "source_age_seconds": 56310,
-  "time_until_update": 30090,
+  "fetched_at": "2026-10-29T20:32:59.588134Z",
+  "source_age_seconds": 73979,
+  "time_until_update": 12421,
   "source": "Alternative.me official API",
   "endpoint": "https://api.alternative.me/fng/?limit=1&format=json",
   "fetch_method": "urllib-attempt-1"
