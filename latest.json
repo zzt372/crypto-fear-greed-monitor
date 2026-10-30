@@ -5,9 +5,9 @@
   "value_classification": "Fear",
   "timestamp": 1793318400,
   "timestamp_iso": "2026-10-30T00:00:00Z",
-  "fetched_at": "2026-10-30T00:12:27.352455Z",
-  "source_age_seconds": 747,
-  "time_until_update": 85653,
+  "fetched_at": "2026-10-30T05:44:20.436458Z",
+  "source_age_seconds": 20660,
+  "time_until_update": 65740,
   "source": "Alternative.me official API",
   "endpoint": "https://api.alternative.me/fng/?limit=1&format=json",
   "fetch_method": "urllib-attempt-1"
